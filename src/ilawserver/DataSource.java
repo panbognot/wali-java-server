@@ -17,7 +17,7 @@ import java.util.List;
 
 /**
  *
- * @author Kana Antonio
+ * @author Prado Bognot
  */
 public class DataSource {    
    
@@ -227,6 +227,52 @@ public class DataSource {
     /*
      * Scheduling 
      */
+    protected List<ArrayList<Object>> getLampScheduleAlarm(
+            String alarm_lower_time, String alarm_upper_time, int day_of_week){       
+        System.out.println("Getting Lamp Schedule ON for date " + alarm_lower_time);
+        List<ArrayList<Object>> schedule = new ArrayList();
+        PreparedStatement preparedStatement = null;
+        ResultSet resultSet = null;
+        
+        try{
+            preparedStatement = connect.prepareStatement("SELECT DISTINCT\n" +
+                "clusterid, bulbid, brightness, ipaddress, name, activate_time, day_of_week\n" +
+                "FROM alarm_schedule\n" +
+                "JOIN cluster_bulb USING (clusterid)\n" +
+                "JOIN bulb USING (bulbid)\n" +
+                "WHERE day_of_week = " + day_of_week + "\n" +
+                "AND activate_time BETWEEN '" + alarm_lower_time + "' AND '" + alarm_upper_time + "'"); 
+            
+            resultSet = preparedStatement.executeQuery();
+            while (resultSet.next()) {  
+                ArrayList<Object> str = new ArrayList();
+                
+                int _clusterid = resultSet.getInt("clusterid");
+                int _bulbid = resultSet.getInt("bulbid");
+                int _brightness = resultSet.getInt("brightness");
+                String _ipaddress = resultSet.getString("ipaddress");
+                String _name = resultSet.getString("name");
+                String _activate_time = resultSet.getString("activate_time");
+                int _day_of_week = resultSet.getInt("day_of_week");
+                
+                str.add(_clusterid);
+                str.add(_bulbid);
+                str.add(_brightness);
+                str.add(_ipaddress);
+                str.add(_name);
+                str.add(_activate_time);
+                str.add(_day_of_week);
+                
+                schedule.add(str);
+            }
+        } catch (Exception e){
+            
+        } finally {
+            close(preparedStatement, resultSet, false);
+        }
+        return schedule;
+    }      
+    
     protected List<ArrayList<Object>> getLampSchedule_on(
             String start_lower_date, String start_upper_date, 
             String start_lower_time, String start_upper_time){       
@@ -236,16 +282,6 @@ public class DataSource {
         ResultSet resultSet = null;
         
         try{
-            /*
-            preparedStatement = connect.prepareStatement("SELECT clusterid, bulbid, brightness, \n" +
-                "ipaddress, name, start_date, end_date, start_time, end_time \n" +
-                "FROM sched_cluster\n" +
-                "JOIN schedule USING (scheduleid)\n" +
-                "JOIN cluster_bulb USING (clusterid)\n" +
-                "JOIN bulb USING (bulbid) \n" +
-                "WHERE start_date = '" + start_lower_date + "' and start_time = '" + start_lower_time + "'");    
-            */
-            
             preparedStatement = connect.prepareStatement("SELECT DISTINCT clusterid, bulbid, brightness, \n" +
                 "ipaddress, name, start_date, end_date, start_time, end_time \n" +
                 "FROM sched_cluster\n" +
@@ -297,16 +333,6 @@ public class DataSource {
         ResultSet resultSet = null;
         
         try{
-            /*
-            preparedStatement = connect.prepareStatement("SELECT clusterid, bulbid, brightness, \n" +
-                "ipaddress, name, start_date, end_date, start_time, end_time \n" +
-                "FROM sched_cluster\n" +
-                "JOIN schedule USING (scheduleid)\n" +
-                "JOIN cluster_bulb USING (clusterid)\n" +
-                "JOIN bulb USING (bulbid) \n" +
-                "WHERE end_date = '" + end_lower_date + "' and end_time = '" + end_lower_time + "'");    
-            */
-            
             preparedStatement = connect.prepareStatement("SELECT DISTINCT clusterid, bulbid, brightness, \n" +
                 "ipaddress, name, start_date, end_date, start_time, end_time \n" +
                 "FROM sched_cluster\n" +
