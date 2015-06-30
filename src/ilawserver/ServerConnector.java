@@ -160,6 +160,7 @@ class SendScheduledLightEvents{
             System.out.println("***SendScheduledLightEvents()"); 
             List<ArrayList<Object>> on;
             List<ArrayList<Object>> off;
+            List<ArrayList<Object>> changeBrightness;
             ArrayList<Integer> bulbids = new ArrayList<>();
             
             /*
@@ -189,6 +190,30 @@ class SendScheduledLightEvents{
             end_upper.set(Calendar.SECOND, 0);
             end_upper.add(Calendar.SECOND, (minuteSched * 60) / 2);            
             
+            changeBrightness = dc.getLampSchedule(
+                    sdf_time.format(date_lower.getTime()), sdf_time.format(date_upper.getTime()), 0);
+
+            for(ArrayList<Object> ar: changeBrightness){
+                System.out.println("***SendScheduledLightEvents(): Looking for lights to Change Brightness"); 
+                
+                int clusterid = (int) ar.get(0);
+                int bulbid = (int) ar.get(1);
+                int brightness = (int) ar.get(2);
+                
+                String ipaddress = ar.get(3).toString();
+                String name = ar.get(4).toString();
+                String activate_time = ar.get(5).toString();
+
+                int day_of_week = (int) ar.get(6);
+                
+                bulbids.add(bulbid);
+                ScheduleAlarm sched = new ScheduleAlarm(ipaddress, bulbid, brightness, activate_time, day_of_week);
+                
+                //sendLightOnSchedule(sched);
+                sendLightBrightnessSchedule(sched);
+            }            
+            
+            /*
             on = dc.getLampSchedule(
                     sdf_date.format(date_lower.getTime()), sdf_date.format(date_upper.getTime()), 
                     null, null,
@@ -199,8 +224,10 @@ class SendScheduledLightEvents{
                     sdf_date.format(end_lower.getTime()), sdf_date.format(end_upper.getTime()),
                     null, null,
                     sdf_time.format(end_lower.getTime()), sdf_time.format(end_upper.getTime()));
+            
             System.out.println("on size() - " + on.size());
             System.out.println("off size() - " + off.size());
+            
             for(ArrayList<Object> ar: on){
                 System.out.println("***SendScheduledLightEvents(): Looking for light to turn ON"); 
                 
@@ -245,6 +272,7 @@ class SendScheduledLightEvents{
                     sendLightOffSchedule(sched);
                 }
             }
+            */
             
             System.out.println("***SendScheduledLightEvents(): End of function"); 
             
@@ -475,17 +503,29 @@ class DatabaseConnector {
         ds.writePowerAnalysis(readings.getIp(), readings.getStat(), readings.getWatts(), readings.getVa(),
                 readings.getVar(), readings.getPf(), readings.getPf(), readings.getAmpere(), sdf.format(sdf.parse(readings.getTimestamp())));
     }
-    //protected List<ArrayList<Object>> getLampSchedule(String start_date, String end_date, String start_time, String end_time){
+
+    /*
     protected List<ArrayList<Object>> getLampSchedule(
             String start_date_bottom_range, String start_date_upper_range, 
             String end_date_bottom_range, String end_date_upper_range, 
             String start_time_bottom_range, String start_time_upper_range, 
             String end_time_bottom_range, String end_time_upper_range){
+    */
+     protected List<ArrayList<Object>> getLampSchedule(
+            String activate_time_bottom_range, String activate_time_upper_range, int day_of_week){    
+        
+        System.out.println("Activation time between - " + activate_time_bottom_range + " and " + activate_time_upper_range); 
+        System.out.println("Day of Week - " + day_of_week);
+     
+        return ds.getLampScheduleAlarm(
+        activate_time_bottom_range, activate_time_upper_range, day_of_week);
+        
+        /*
         System.out.println("start date between - " + start_date_bottom_range + " and " + start_date_upper_range);
         System.out.println("end date between - " + end_date_bottom_range + " and " + end_date_upper_range);
         System.out.println("start time between - " + start_time_bottom_range + " and " + start_time_upper_range);
         System.out.println("end date between - " + end_time_bottom_range + " and " + end_time_upper_range);
-        
+                
         if(end_date_bottom_range == null && 
             end_date_upper_range == null &&
             end_time_bottom_range == null &&
@@ -498,6 +538,7 @@ class DatabaseConnector {
                     end_date_bottom_range, end_date_upper_range, 
                     end_time_bottom_range, end_time_upper_range);
         }
+        */
     }
     
     protected void changeStateToCnbr(String ipaddress){
