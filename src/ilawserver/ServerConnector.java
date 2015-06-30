@@ -20,7 +20,7 @@ import java.net.URL;
 
 /**
  *
- * @author Kana Antonio
+ * @author Prado Bognot
  */
 public class ServerConnector {
     public static void main(String[] args){
@@ -287,6 +287,56 @@ class SendScheduledLightEvents{
     
     //final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(sendscheduledlightevents, setTime() , 1800000, SECONDS);  
     final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(sendscheduledlightevents, setTime(), minuteSched * 60, SECONDS);    
+
+    private void sendLightBrightnessSchedule(ScheduleAlarm schedule){
+        System.out.println("sendLightBrightnessSchedule()");
+        try {
+            Calendar currentTime = Calendar.getInstance();
+            currentTime.set(Calendar.SECOND, 0);
+
+            String ip = schedule.getIpaddress();
+            int level = schedule.getBrightness();
+            String state = "off";
+            
+            if((level >= 10) && (level <= 100)){
+                state = "on";
+                System.out.println("Turning on lights... level=" + level);
+            }
+            else if ((level >= 0) && (level < 10)) {
+                level = 0;
+                state = "off";
+                System.out.println("Turning off lights...");
+            }
+            
+            String mode = "control";
+            //String url = "http://localhost:81/test3.php?id=" + level;
+            String url = "http://" + ip + "/ilawcontrol.php?state=" + state + "&level=" + level + "&mode=" + mode;
+
+            URL obj = new URL(url);
+
+            HttpURLConnection con = (HttpURLConnection) obj.openConnection();
+            con.setRequestMethod("GET");
+
+            int responseCode = con.getResponseCode();
+            System.out.println("\nSending 'GET' request to URL : " + url);
+            System.out.println("Response Code : " + responseCode);
+
+            StringBuilder response;
+
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()))) {
+                String inputLine;
+                response = new StringBuilder();
+                while ((inputLine = in.readLine()) != null) {
+                        response.append(inputLine);
+                }
+            }
+            System.out.println("sendLightBrightnessSchedule(): Next scheduled setting of lamps will run at " + serverStartTime.getTime());
+
+        } catch (Exception ex) {
+            dc.changeStateToCnbr(schedule.getIpaddress());
+            System.out.println("Failed to send schedule for lamp " + schedule.getIpaddress() + ". Please check connections.");
+        }
+    }    
     
     private void sendLightOnSchedule(Schedule schedule){
         System.out.println("sendLightOnSchedule()");
