@@ -16,6 +16,12 @@ import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 
 /**
@@ -26,8 +32,8 @@ public class ServerConnector {
     public static void main(String[] args){
         DatabaseConnector dc = new DatabaseConnector();
         new BulbInformationChecker(dc);
-        new WritePowerAnalysis(dc);
-        new SendScheduledLightEvents(dc);
+        //new WritePowerAnalysis(dc);
+        //new SendScheduledLightEvents(dc);
     }
 }
 /*
@@ -46,31 +52,103 @@ class BulbInformationChecker{
     final Runnable bulbinformationchecker = new Runnable(){    
         @Override
         public void run(){
+            int tasksMax = 16;
+            int ipCounter = 0;
+            boolean areInfoChecksProcessing = true;
+
+            ExecutorService executor = Executors.newFixedThreadPool(tasksMax);
+            Future[] task;
+            task = new Future[tasksMax];            
+            
+            System.out.println("***BulbInformationChecker(): Start");
             for(String ip : getAllIpAddresses()){
+                task[ipCounter++] = executor.submit(new BulbInfoCheckThread(dc, ip));   
+                
                 try {
-                    System.out.println("***BulbInformationChecker()");
-                    String result;
-
-                    URL url = new URL("http://" + ip + "/lightvalues.txt");
-                    URLConnection conn = url.openConnection();
-                    BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-                    String[] str = new String[3];
-
-                    while ((result = br.readLine()) != null) {
-                        str = result.split(",");
-                    }
-                    Lamp lamp = new Lamp(ip, str[0], str[1], str[2]);
-                    dc.checkBulbConsistency(lamp);    
-                } catch (Exception ex) {
-                    dc.changeStateToCnbr(ip);
-                    System.out.println("The lamp is currently unreachable. Please check connections for " + ip);
-                    System.out.println(ex);
-                }
+                    Thread.sleep(50);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }                
             }
+            
+            while(areInfoChecksProcessing) {
+                boolean isDone = true;
+
+                for(int i=0; i<ipCounter; i++) {
+                    Object status = 0;
+
+                    try {
+                        Thread.sleep(100);                 //1000 milliseconds is one second.
+                        status = task[i].get();
+                    } catch(ExecutionException ex) {
+                        Thread.currentThread().interrupt();
+                    } catch (InterruptedException ex) {
+                        //todo
+                    }
+
+                    // if null the task has finished
+                    if (status == null) {
+                        System.out.println("Task[" + i + "]: completed");
+                    }
+                    else {
+                        // if it doesn't finish, wait
+                        isDone = isDone && false;
+                    }
+                }
+
+                if(isDone) {
+                    areInfoChecksProcessing = false;
+                }
+            }    
+            
+            executor.shutdown();
+            System.out.println("---------------------");
+            try {
+                // wait until all tasks are finished
+                executor.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                //Logger.getLogger(BulbInformationChecker.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            System.out.println("***BulbInformationChecker(): All tasks are finished!");
         }
     };
     final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(bulbinformationchecker, 1, 10, SECONDS);
 }
+
+class BulbInfoCheckThread implements Runnable {
+    
+    DatabaseConnector dc;
+    private String ipAddress;
+    
+    BulbInfoCheckThread(DatabaseConnector dc, String ipAddress) {
+        this.dc = dc;
+        this.ipAddress = ipAddress;
+    }
+
+    @Override
+    public void run() {
+        try {
+            System.out.println("***BulbInfoCheckThread(): " + ipAddress);
+            String result;
+
+            URL url = new URL("http://" + ipAddress + "/lightvalues.txt");
+            URLConnection conn = url.openConnection();
+            BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            String[] str = new String[3];
+
+            while ((result = br.readLine()) != null) {
+                str = result.split(",");
+            }
+            Lamp lamp = new Lamp(ipAddress, str[0], str[1], str[2]);
+            dc.checkBulbConsistency(lamp);    
+        } catch (Exception ex) {
+            dc.changeStateToCnbr(ipAddress);
+            System.out.println("The lamp is currently unreachable. Please check connections for " + ipAddress);
+            System.out.println(ex);
+        }        
+    }
+}
+
 /*
  * WritePowerAnalysis - Retrieves and writes the power analysis of each lamp.
  * Runs after 250 seconds on server start up and checks every 5 seconds
