@@ -31,9 +31,9 @@ import java.util.logging.Logger;
 public class ServerConnector {
     public static void main(String[] args){
         DatabaseConnector dc = new DatabaseConnector();
-        new BulbInformationChecker(dc);
-        new WritePowerAnalysis(dc);
-        //new SendScheduledLightEvents(dc);
+        //new BulbInformationChecker(dc);
+        //new WritePowerAnalysis(dc);
+        new SendScheduledLightEvents(dc);
     }
 }
 /*
@@ -303,7 +303,7 @@ class SendScheduledLightEvents{
     private ArrayList<Schedule> schedule_on = new ArrayList<>();
     private ArrayList<Schedule> schedule_off = new ArrayList<>();
     
-    private int minuteSched = 3;
+    private int minuteSched = 1;
     
     final Runnable sendscheduledlightevents = new Runnable(){    
         @Override
@@ -335,9 +335,16 @@ class SendScheduledLightEvents{
             changeBrightness = dc.getLampSchedule(
                     sdf_time.format(date_lower.getTime()), sdf_time.format(date_upper.getTime()), 0);
 
-            for(ArrayList<Object> ar: changeBrightness){
-                System.out.println("***SendScheduledLightEvents(): Looking for lights to Change Brightness"); 
-                
+            int tasksMax = 16;
+            int ipCounter = 0;
+            boolean areInfoChecksProcessing = true;
+
+            ExecutorService executor = Executors.newFixedThreadPool(tasksMax);
+            Future[] task;
+            task = new Future[tasksMax];                
+            
+            System.out.println("***SendScheduledLightEvents(): Looking for lights to Change Brightness"); 
+            for(ArrayList<Object> ar: changeBrightness){ 
                 int clusterid = (int) ar.get(0);
                 int bulbid = (int) ar.get(1);
                 int brightness = (int) ar.get(2);
@@ -349,73 +356,54 @@ class SendScheduledLightEvents{
                 int day_of_week = (int) ar.get(6);
                 
                 bulbids.add(bulbid);
-                ScheduleAlarm sched = new ScheduleAlarm(ipaddress, bulbid, brightness, activate_time, day_of_week);
                 
-                //sendLightOnSchedule(sched);
-                sendLightBrightnessSchedule(sched);
-            }            
-            
-            /*
-            on = dc.getLampSchedule(
-                    sdf_date.format(date_lower.getTime()), sdf_date.format(date_upper.getTime()), 
-                    null, null,
-                    sdf_time.format(date_lower.getTime()), sdf_time.format(date_upper.getTime()), 
-                    null, null);
-            off = dc.getLampSchedule(
-                    null, null,
-                    sdf_date.format(end_lower.getTime()), sdf_date.format(end_upper.getTime()),
-                    null, null,
-                    sdf_time.format(end_lower.getTime()), sdf_time.format(end_upper.getTime()));
-            
-            System.out.println("on size() - " + on.size());
-            System.out.println("off size() - " + off.size());
-            
-            for(ArrayList<Object> ar: on){
-                System.out.println("***SendScheduledLightEvents(): Looking for light to turn ON"); 
+                task[ipCounter++] = executor.submit(new SendScheduledLightEventsThread(dc, serverStartTime, ipaddress, bulbid, brightness, activate_time, day_of_week));   
                 
-                int clusterid = (int) ar.get(0);
-                int bulbid = (int) ar.get(1);
-                int brightness = (int) ar.get(2);
-                
-                String ipaddress = ar.get(3).toString();
-                String name = ar.get(4).toString();
-                String start_date = ar.get(5).toString();
-                String end_date = ar.get(6).toString();
-                String start_time = ar.get(7).toString();
-                String end_time = ar.get(8).toString();
-                
-                bulbids.add(bulbid);
-                Schedule sched = new Schedule(ipaddress, bulbid, brightness, start_date, 
-                        end_date, start_time, end_time);
-                
-                sendLightOnSchedule(sched);
-                
-                //sendLightOffSchedule();
-                //schedule_on.add(sched);
-            }
-            for(ArrayList<Object> ar: off){
-                System.out.println("***SendScheduledLightEvents(): Looking for light to turn OFF"); 
-                
-                int bulbid = (int) ar.get(1);
-                if(!bulbids.contains(bulbid)){
-                    int clusterid = (int) ar.get(0);
-                    int brightness = (int) ar.get(2);
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }                  
+            }       
+            while(areInfoChecksProcessing) {
+                boolean isDone = true;
 
-                    String ipaddress = ar.get(3).toString();
-                    String name = ar.get(4).toString();
-                    String start_date = ar.get(5).toString();
-                    String end_date = ar.get(6).toString();
-                    String start_time = ar.get(7).toString();
-                    String end_time = ar.get(8).toString();
+                for(int i=0; i<ipCounter; i++) {
+                    Object status = 0;
 
-                    Schedule sched = new Schedule(ipaddress, bulbid, brightness, start_date, 
-                            end_date, start_time, end_time);
+                    try {
+                        Thread.sleep(100);                 //1000 milliseconds is one second.
+                        status = task[i].get();
+                    } catch(ExecutionException ex) {
+                        Thread.currentThread().interrupt();
+                    } catch (InterruptedException ex) {
+                        //todo
+                    }
 
-                    sendLightOffSchedule(sched);
+                    // if null the task has finished
+                    if (status == null) {
+                        System.out.println("***WritePowerAnalysis(): Task[" + i + "] completed");
+                    }
+                    else {
+                        // if it doesn't finish, wait
+                        isDone = isDone && false;
+                    }
                 }
-            }
-            */
+
+                if(isDone) {
+                    areInfoChecksProcessing = false;
+                }
+            }    
             
+            executor.shutdown();
+            System.out.println("---------------------");
+            try {
+                // wait until all tasks are finished
+                executor.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                //Logger.getLogger(BulbInformationChecker.class.getName()).log(Level.SEVERE, null, ex);
+            }
+
             System.out.println("***SendScheduledLightEvents(): End of function"); 
             
             setTime();
@@ -435,19 +423,6 @@ class SendScheduledLightEvents{
         
         //serverStartTime.set(Calendar.MINUTE, 30);
         serverStartTime.add(Calendar.SECOND, minInterval);  
-        /*
-        int checker = serverTime >= 30 ? 60 : 30;
-        
-        int thirtyMinuteInterval = (checker - serverTime) * 60;
-        System.out.println("seconds - " + thirtyMinuteInterval);
-
-        if(serverStartTime.get(Calendar.MINUTE) < 30){
-            serverStartTime.set(Calendar.MINUTE, 30);
-        } else {
-            serverStartTime.set(Calendar.MINUTE, 0);
-            serverStartTime.add(Calendar.HOUR_OF_DAY, 1);           
-        }
-        */
         
         serverStartTime.set(Calendar.SECOND, 0);
         System.out.println("setTime(): Next scheduled setting of lamps will run at " + serverStartTime.getTime());
@@ -455,7 +430,6 @@ class SendScheduledLightEvents{
         return minInterval;
     }
     
-    //final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(sendscheduledlightevents, setTime() , 1800000, SECONDS);  
     final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(sendscheduledlightevents, setTime(), minuteSched * 60, SECONDS);    
 
     private void sendLightBrightnessSchedule(ScheduleAlarm schedule){
@@ -507,17 +481,57 @@ class SendScheduledLightEvents{
             System.out.println("Failed to send schedule for lamp " + schedule.getIpaddress() + ". Please check connections.");
         }
     }    
+}
+
+class SendScheduledLightEventsThread implements Runnable {
     
-    private void sendLightOnSchedule(Schedule schedule){
-        System.out.println("sendLightOnSchedule()");
+    DatabaseConnector dc;
+    private Calendar startTime;
+    
+    private String ipAddress;
+    private int bulbid;
+    private int brightness;
+    private String activate_time;
+    private int day_of_week;
+    
+    SendScheduledLightEventsThread(DatabaseConnector dc, Calendar serverStartTime, String ipAddress,
+            int bulbid, int brightness, String activate_time, int day_of_week) {
+        this.dc = dc;
+        this.startTime = serverStartTime;
+        
+        this.ipAddress = ipAddress;
+        this.bulbid = bulbid;
+        this.brightness = brightness;
+        this.activate_time = activate_time;
+        this.day_of_week = day_of_week;
+    }
+
+    @Override
+    public void run() {
+        ScheduleAlarm sched = new ScheduleAlarm(ipAddress, bulbid, brightness, activate_time, day_of_week);
+        sendLightBrightnessScheduleThread(sched, startTime);    
+    }
+    
+    private void sendLightBrightnessScheduleThread(ScheduleAlarm schedule, Calendar serverStartTime){
+        System.out.println("sendLightBrightnessSchedule()");
         try {
-            System.out.println("Turning on lights...");
             Calendar currentTime = Calendar.getInstance();
             currentTime.set(Calendar.SECOND, 0);
 
             String ip = schedule.getIpaddress();
-            String state = "on";
             int level = schedule.getBrightness();
+            String state = "off";
+            
+            if((level >= 10) && (level <= 100)){
+                state = "on";
+                System.out.println("Turning on lights... level=" + level);
+            }
+            else if ((level >= 0) && (level < 10)) {
+                level = 0;
+                state = "off";
+                System.out.println("Turning off lights...");
+            }
+            
             String mode = "control";
             //String url = "http://localhost:81/test3.php?id=" + level;
             String url = "http://" + ip + "/ilawcontrol.php?state=" + state + "&level=" + level + "&mode=" + mode;
@@ -540,51 +554,13 @@ class SendScheduledLightEvents{
                         response.append(inputLine);
                 }
             }
-            System.out.println("sendLightOnSchedule(): Next scheduled setting of lamps will run at " + serverStartTime.getTime());
+            System.out.println("sendLightBrightnessSchedule(): Next scheduled setting of lamps will run at " + serverStartTime.getTime());
 
         } catch (Exception ex) {
             dc.changeStateToCnbr(schedule.getIpaddress());
             System.out.println("Failed to send schedule for lamp " + schedule.getIpaddress() + ". Please check connections.");
         }
-    }
-    private void sendLightOffSchedule(Schedule schedule){
-        System.out.println("sendLightOffSchedule()");
-        try {
-            System.out.println("Turning off lights...");
-            Calendar currentTime = Calendar.getInstance();
-            currentTime.set(Calendar.SECOND, 0);
-
-            String ip = schedule.getIpaddress();
-            String state = "off";
-            int level = 0;
-            String mode = "control";
-            //String url = "http://localhost:81/test3.php?id=" + level;
-            String url = "http://" + ip + "/ilawcontrol.php?state=" + state + "&level=" + level + "&mode=" + mode;
-
-            URL obj = new URL(url);
-
-            HttpURLConnection con = (HttpURLConnection) obj.openConnection();
-            con.setRequestMethod("GET");
-
-            int responseCode = con.getResponseCode();
-            System.out.println("\nSending 'GET' request to URL : " + url);
-
-            StringBuilder response;
-
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()))) {
-                String inputLine;
-                response = new StringBuilder();
-                while ((inputLine = in.readLine()) != null) {
-                        response.append(inputLine);
-                }
-            }
-            System.out.println("sendLightOffSchedule(): Next scheduled setting of lamps will run at " + serverStartTime.getTime());
-
-        } catch (Exception ex) {
-            dc.changeStateToCnbr(schedule.getIpaddress());
-            System.out.println("Failed to send schedule for lamp " + schedule.getIpaddress() + ". Please check connections.");
-        }
-    }
+    }        
 }
 
 /*
@@ -646,13 +622,6 @@ class DatabaseConnector {
                 readings.getVar(), readings.getPf(), readings.getPf(), readings.getAmpere(), sdf.format(sdf.parse(readings.getTimestamp())));
     }
 
-    /*
-    protected List<ArrayList<Object>> getLampSchedule(
-            String start_date_bottom_range, String start_date_upper_range, 
-            String end_date_bottom_range, String end_date_upper_range, 
-            String start_time_bottom_range, String start_time_upper_range, 
-            String end_time_bottom_range, String end_time_upper_range){
-    */
      protected List<ArrayList<Object>> getLampSchedule(
             String activate_time_bottom_range, String activate_time_upper_range, int day_of_week){    
         
@@ -661,26 +630,6 @@ class DatabaseConnector {
      
         return ds.getLampScheduleAlarm(
         activate_time_bottom_range, activate_time_upper_range, day_of_week);
-        
-        /*
-        System.out.println("start date between - " + start_date_bottom_range + " and " + start_date_upper_range);
-        System.out.println("end date between - " + end_date_bottom_range + " and " + end_date_upper_range);
-        System.out.println("start time between - " + start_time_bottom_range + " and " + start_time_upper_range);
-        System.out.println("end date between - " + end_time_bottom_range + " and " + end_time_upper_range);
-                
-        if(end_date_bottom_range == null && 
-            end_date_upper_range == null &&
-            end_time_bottom_range == null &&
-            end_time_upper_range == null){
-            return ds.getLampSchedule_on(
-                    start_date_bottom_range, start_date_upper_range,
-                    start_time_bottom_range, start_time_upper_range);
-        } else {
-            return ds.getLampSchedule_off(
-                    end_date_bottom_range, end_date_upper_range, 
-                    end_time_bottom_range, end_time_upper_range);
-        }
-        */
     }
     
     protected void changeStateToCnbr(String ipaddress){
