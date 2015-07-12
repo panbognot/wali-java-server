@@ -32,7 +32,7 @@ public class ServerConnector {
     public static void main(String[] args){
         DatabaseConnector dc = new DatabaseConnector();
         new BulbInformationChecker(dc);
-        //new WritePowerAnalysis(dc);
+        new WritePowerAnalysis(dc);
         //new SendScheduledLightEvents(dc);
     }
 }
@@ -88,7 +88,7 @@ class BulbInformationChecker{
 
                     // if null the task has finished
                     if (status == null) {
-                        System.out.println("Task[" + i + "]: completed");
+                        System.out.println("***BulbInformationChecker(): Task[" + i + "] completed");
                     }
                     else {
                         // if it doesn't finish, wait
@@ -112,7 +112,7 @@ class BulbInformationChecker{
             System.out.println("***BulbInformationChecker(): All tasks are finished!");
         }
     };
-    final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(bulbinformationchecker, 1, 10, SECONDS);
+    final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(bulbinformationchecker, 1, 30, SECONDS);
 }
 
 class BulbInfoCheckThread implements Runnable {
@@ -143,7 +143,7 @@ class BulbInfoCheckThread implements Runnable {
             dc.checkBulbConsistency(lamp);    
         } catch (Exception ex) {
             dc.changeStateToCnbr(ipAddress);
-            System.out.println("The lamp is currently unreachable. Please check connections for " + ipAddress);
+            System.out.println("***BulbInfoCheckThread(): The lamp is currently unreachable. Please check connections for " + ipAddress);
             System.out.println(ex);
         }        
     }
@@ -163,55 +163,128 @@ class WritePowerAnalysis{
     final Runnable writepoweranalysis = new Runnable(){    
         @Override
         public void run(){
-          for(String ip: dc.getAllIpAddresses()){
+            int tasksMax = 16;
+            int ipCounter = 0;
+            boolean areInfoChecksProcessing = true;
+
+            ExecutorService executor = Executors.newFixedThreadPool(tasksMax);
+            Future[] task;
+            task = new Future[tasksMax];                
+            
+            System.out.println("***WritePowerAnalysis(): Starting");
+            for(String ip : dc.getAllIpAddresses()){
+                task[ipCounter++] = executor.submit(new WritePowerAnalysisThread(dc, ip));   
+                
                 try {
-                    System.out.println("***WritePowerAnalysis()");
-                    
-                    String urlForReadings = "http://" + ip + "/send.php";
-                    URL url = new URL(urlForReadings);
-                    URLConnection conn = url.openConnection();
-                    BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-
-                    String inputLine;
-                    StringBuilder sb = new StringBuilder();
-
-                    while ((inputLine = br.readLine()) != null) {
-                        sb.append(inputLine);
-                    }
-                    String str_url = sb.toString();
-
-                    JSONParser parser = new JSONParser();
-                    Object obj = parser.parse(str_url);
-                    JSONArray array = (JSONArray)obj;
-
-                    for(int i = 0; i < array.size(); i++){
-                        JSONObject json = (JSONObject)array.get(i);
-                        String stat = json.get("stat").toString().trim();
-                        String pf = json.get("pf").toString().trim();
-                        String watts = json.get("watts").toString().trim();
-                        String va = json.get("va").toString().trim();
-                        String var = json.get("var").toString().trim();
-                        String volt = json.get("volt").toString().trim();
-                        String ampere = json.get("ampere").toString().trim();
-                        String timestamp = json.get("timestamp").toString().trim();
-                        
-                        if((stat.equals("InRange"))||(stat.equals("Overflw"))){
-                            Readings readings = new Readings(ip, stat, pf, watts, va,
-                                var, volt, ampere, timestamp);
-                            dc.writePowerAnalysis(readings);
-                        }
-                    }
-
-                } catch(Exception e) {
-                    dc.changeStateToCnbr(ip);
-                    System.out.println("The lamp is currently unreachable. Please check connections for " + ip);
-                    System.out.println(e);
-                }
+                    Thread.sleep(50);
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                }                
             }
+            
+            while(areInfoChecksProcessing) {
+                boolean isDone = true;
+
+                for(int i=0; i<ipCounter; i++) {
+                    Object status = 0;
+
+                    try {
+                        Thread.sleep(100);                 //1000 milliseconds is one second.
+                        status = task[i].get();
+                    } catch(ExecutionException ex) {
+                        Thread.currentThread().interrupt();
+                    } catch (InterruptedException ex) {
+                        //todo
+                    }
+
+                    // if null the task has finished
+                    if (status == null) {
+                        System.out.println("***WritePowerAnalysis(): Task[" + i + "] completed");
+                    }
+                    else {
+                        // if it doesn't finish, wait
+                        isDone = isDone && false;
+                    }
+                }
+
+                if(isDone) {
+                    areInfoChecksProcessing = false;
+                }
+            }    
+            
+            executor.shutdown();
+            System.out.println("---------------------");
+            try {
+                // wait until all tasks are finished
+                executor.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ex) {
+                //Logger.getLogger(BulbInformationChecker.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            System.out.println("***WritePowerAnalysis(): All tasks are finished!");
         }
     };
-    final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(writepoweranalysis, 11, 10, SECONDS);
+    final ScheduledFuture<?> writer = scheduler.scheduleAtFixedRate(writepoweranalysis, 10, 60, SECONDS);
 }
+
+class WritePowerAnalysisThread implements Runnable {
+    
+    DatabaseConnector dc;
+    private String ipAddress;
+    
+    WritePowerAnalysisThread(DatabaseConnector dc, String ipAddress) {
+        this.dc = dc;
+        this.ipAddress = ipAddress;
+    }
+
+    @Override
+    public void run() {
+        //thread from power analysis
+        try {
+            System.out.println("***WritePowerAnalysisThread(): " + ipAddress);
+
+            String urlForReadings = "http://" + ipAddress + "/send.php";
+            URL url = new URL(urlForReadings);
+            URLConnection conn = url.openConnection();
+            BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+
+            String inputLine;
+            StringBuilder sb = new StringBuilder();
+
+            while ((inputLine = br.readLine()) != null) {
+                sb.append(inputLine);
+            }
+            String str_url = sb.toString();
+
+            JSONParser parser = new JSONParser();
+            Object obj = parser.parse(str_url);
+            JSONArray array = (JSONArray)obj;
+
+            for(int i = 0; i < array.size(); i++){
+                JSONObject json = (JSONObject)array.get(i);
+                String stat = json.get("stat").toString().trim();
+                String pf = json.get("pf").toString().trim();
+                String watts = json.get("watts").toString().trim();
+                String va = json.get("va").toString().trim();
+                String var = json.get("var").toString().trim();
+                String volt = json.get("volt").toString().trim();
+                String ampere = json.get("ampere").toString().trim();
+                String timestamp = json.get("timestamp").toString().trim();
+
+                if((stat.equals("InRange"))||(stat.equals("Overflw"))){
+                    Readings readings = new Readings(ipAddress, stat, pf, watts, va,
+                        var, volt, ampere, timestamp);
+                    dc.writePowerAnalysis(readings);
+                }
+            }
+
+        } catch(Exception e) {
+            dc.changeStateToCnbr(ipAddress);
+            System.out.println("***WritePowerAnalysis(): The lamp is currently unreachable. Please check connections for " + ipAddress);
+            System.out.println(e);
+        }        
+    }
+}
+
 /*
  * SendScheduledLightEvents - Retrieves and sends lamp schedule to the Raspberry Pi 
  * Runs on the first :30 time interval on server start up and checks every 30 minutes
@@ -241,15 +314,6 @@ class SendScheduledLightEvents{
             List<ArrayList<Object>> changeBrightness;
             ArrayList<Integer> bulbids = new ArrayList<>();
             
-            /*
-            Calendar date = Calendar.getInstance();
-            date.set(Calendar.SECOND, 0);
-            
-            Calendar end = Calendar.getInstance();
-            //end.add(Calendar.DATE, 1);
-            end.set(Calendar.SECOND, 0);
-            */
- 
             //Set the range of schedules for the lamp ON
             Calendar date_lower = Calendar.getInstance();
             date_lower.set(Calendar.SECOND, 0);
